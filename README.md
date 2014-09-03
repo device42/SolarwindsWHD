@@ -1,6 +1,6 @@
 # Device42 to SolarWinds WHD sync tool
 
-The _d42_sync_tool.py_ uploads data from Device42 to SolarWinds WebHelpDesk.
+The _d42_sync_tool.py_ uploads data from Device42 to SolarWinds WebHelpDesk.   
 Device42 Data that is synced is as follows:
 - Buildings (WHD: Locations)
 - Vendors (WHD: Manufacturers)
