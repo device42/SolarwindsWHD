@@ -13,26 +13,8 @@ DIR = os.path.dirname(__file__)
 CONFIG_FILE = os.path.join(DIR, 'settings.cfg')
 
 
-
-class Logger():
-    def __init__(self, ):
-        pass
-
-
-    def writer(self, msg):    
-        with codecs.open(LOGFILE, 'a', encoding = 'utf-8') as f:
-            f.write(msg.strip()+'\r\n')
-        if DEBUG == 'True':
-            try:
-                print msg
-            except:
-                print msg.encode('ascii', 'ignore') + ' # < non-ASCII chars detected! >'
-
-    
-
 class Uploader():
     def upload_data(self, path, data):
-        #url = SW_URL+':8081/helpdesk/WebObjects/Helpdesk.woa/ra/Locations/?username='+SW_USER+'&password='+SW_PWD
         url = '%s:8081/helpdesk/WebObjects/Helpdesk.woa/ra/%s/?username=%s&password=%s' % (SW_URL, path, SW_USER,  SW_PWD )
         r = requests.post(url, data=data)
         if DEBUG:
@@ -41,7 +23,6 @@ class Uploader():
             print '\tHTTP Status Code: %s\n\t%s' % (r.status_code, r.text)
 
     def update_data(self, path, data):
-        #url = SW_URL+':8081/helpdesk/WebObjects/Helpdesk.woa/ra/Locations/?username='+SW_USER+'&password='+SW_PWD
         url = '%s:8081/helpdesk/WebObjects/Helpdesk.woa/ra/%s/?username=%s&password=%s' % (SW_URL, path, SW_USER,  SW_PWD )
         r = requests.put(url, data=data)
         if DEBUG:
@@ -67,10 +48,8 @@ class Reader():
         }
         r = requests.get(url, headers=headers, verify=False)
         msg = 'Status code: %s' % str(r.status_code)
-        logger.writer(msg)
         if DEBUG:
-            msg = str(r.text)
-            logger.writer(msg)
+            print msg
         return r.text
 
 
@@ -79,8 +58,9 @@ class Reader():
                 % (SW_URL, path, filter, quote("="),  what, SW_USER, SW_PWD)
         r = requests.get(url)
         result = json.loads(r.text)
-        #print '\n----------------------------------'
-        #print result
+        if DEBUG:
+            print '\n----------------------------------'
+            print result
         return result
         
     def get_all_manufacturers(self):
@@ -88,8 +68,9 @@ class Reader():
                 % (SW_URL, SW_USER, SW_PWD)
         r = requests.get(url)
         result = json.loads(r.text)
-        #print '\n----------------------------------'
-        #print result
+        if DEBUG:
+            print '\n----------------------------------'
+            print result
         return result
         
     def get_all_types(self):
@@ -97,8 +78,9 @@ class Reader():
                 % (SW_URL, SW_USER, SW_PWD)
         r = requests.get(url)
         result = r.json()
-        #print '\n----------------------------------'
-        #print result
+        if DEBUG:
+            print '\n----------------------------------'
+            print result
         return result
         
     def get_all_locations(self):
@@ -106,8 +88,9 @@ class Reader():
                 % (SW_URL, SW_USER, SW_PWD)
         r = requests.get(url)
         result = r.json()
-        #print '\n----------------------------------'
-        #print result
+        if DEBUG:
+            print '\n----------------------------------'
+            print result
         return result
         
         
@@ -134,7 +117,6 @@ class Utility():
             # SolarWinds
             SW_USER   = cc.get('solarwinds', 'username')
             SW_PWD    = cc.get('solarwinds', 'password')
-            SW_KEY     = cc.get('solarwinds', 'apikey')
             SW_URL     = cc.get('solarwinds', 'url')
             
             #Other
@@ -144,8 +126,98 @@ class Utility():
             LOGFILE      = cc.get('other', 'logfile')
             # ------------------------------------------------------------------------
             
-            return D42_USER, D42_PWD, D42_URL,  SW_USER, SW_PWD, SW_KEY, SW_URL,\
+            return D42_USER, D42_PWD, D42_URL,  SW_USER, SW_PWD, SW_URL,\
                       DRY_RUN, DEBUG, LOGGING,  os.path.join(DIR, LOGFILE)
+
+
+
+class Asset():
+    def __init__(self):
+        pass
+        
+    
+    def get_devices_from_d42(self):
+        device_names = []
+        
+        url = D42_URL+'/api/1.0/hardwares/'
+        result = json.loads(reader.get_d42_data(url))
+        
+        url = D42_URL + '/api/1.0/devices/'
+        r = reader.get_d42_data(url)
+        response = json.loads(r)['Devices']
+        
+        locations = self.get_locations_from_sw()
+        
+        for r in response:
+            device_names.append(r['name'])
+            
+        for dev in device_names:
+            url = D42_URL + '/api/1.0/devices/name/%s' % dev
+            device = json.loads(reader.get_d42_data(url))
+            if DEBUG:
+                print '\n-------------------------------------------'
+                print json.dumps(device, indent=4, sort_keys=True)
+                print '-------------------------------------------\n'
+            data = {}
+            model_name = device['hw_model']
+            device_name = device['name']
+            if not device_name:
+                print '[!] Cannot import device(asset) without name!'
+                break
+            if model_name:
+                hwid = self.get_hwid(model_name.lower())
+                data.update({'model': {'id':hwid}})
+                try:
+                    mac = device['ip_addresses'][0]['macaddress']
+                    data.update({'macAddress':mac})
+                except KeyError:
+                    pass
+                try:
+                    ip    = device['ip_addresses'][0]['ip']
+                    data.update({'networkAddress':ip})
+                except KeyError:
+                    pass
+                try:
+                    d42loc = data['location']
+                    loc_id = locations[d42loc]
+                    data.update({'location': {'id':loc_id}})
+                except KeyError:
+                    pass
+                
+                data.update({'notes': device['notes']})
+                data.update({'serialNumber': device['serial_no']})
+
+                data.update({'assetNumber' : device_name})
+                
+                self.create_asset(data, device_name)
+            
+            else:
+                '[!] Cannot create asset without model name!'
+                
+  
+    def get_locations_from_sw(self):
+        raw = reader.get_all_locations()
+        locations = {}
+        for x in raw:
+            location = x['locationName']
+            id          = x['id'] 
+            locations.update({location : id})
+        return locations
+        
+
+    def get_hwid(self, model_name):
+        """
+        Get hardware model ID from WHD by name.
+        """
+        raw = reader.search_sw_data('Models', 'modelName', model_name)
+        return raw[0]['id']
+
+
+    def create_asset(self, data, asset_no):
+        print '[!] Creating asset with asset number: "%s"' % asset_no
+        uploader.upload_data('Assets', json.dumps(data))
+
+
 
 
 def sync_buildings():
@@ -280,106 +352,6 @@ def sync_models():
         uploader.upload_data('Models', json.dumps(data))
 
 
-class Asset():
-    """
-    {  
-    "macAddress": "macAddress", 
-    "networkAddress": "networkAddress", 
-    "notes": "notes", 
-    "serialNumber": "serialNumber", 
-    "location": { "id": 1 }, 
-    "model": { "id": 1 }
-    }
-    """
-    def __init__(self):
-        pass
-        
-    
-    def get_devices_from_d42(self):
-        device_names = []
-        
-        url = D42_URL+'/api/1.0/hardwares/'
-        result = json.loads(reader.get_d42_data(url))
-        
-        url = D42_URL + '/api/1.0/devices/'
-        r = reader.get_d42_data(url)
-        response = json.loads(r)['Devices']
-        
-        locations = self.get_locations_from_sw()
-        
-        for r in response:
-            device_names.append(r['name'])
-            
-        for dev in device_names:
-            url = D42_URL + '/api/1.0/devices/name/%s' % dev
-            device = json.loads(reader.get_d42_data(url))
-            if DEBUG:
-                print '\n-------------------------------------------'
-                print json.dumps(device, indent=4, sort_keys=True)
-                print '-------------------------------------------\n'
-            data = {}
-            model_name = device['hw_model']
-            device_name = device['name']
-            if not device_name:
-                print '[!] Cannot import device(asset) without name!'
-                break
-            if model_name:
-                hwid = self.get_hwid(model_name.lower())
-                data.update({'model': {'id':hwid}})
-                try:
-                    mac = device['ip_addresses'][0]['macaddress']
-                    data.update({'macAddress':mac})
-                except KeyError:
-                    pass
-                try:
-                    ip    = device['ip_addresses'][0]['ip']
-                    data.update({'networkAddress':ip})
-                except KeyError:
-                    pass
-                try:
-                    d42loc = data['location']
-                    loc_id = locations[d42loc]
-                    data.update({'location': {'id':loc_id}})
-                except KeyError:
-                    pass
-                
-                data.update({'notes': device['notes']})
-                data.update({'serialNumber': device['serial_no']})
-
-                data.update({'assetNumber' : device_name})
-                
-                self.create_asset(data, device_name)
-            
-            else:
-                '[!] Cannot create asset without model name!'
-                
-  
-    def get_locations_from_sw(self):
-        raw = reader.get_all_locations()
-        locations = {}
-        for x in raw:
-            location = x['locationName']
-            id          = x['id'] 
-            locations.update({location : id})
-        return locations
-        
-
-    def get_hwid(self, model_name):
-        """
-        Get hardware model ID from WHD by name.
-        """
-        raw = reader.search_sw_data('Models', 'modelName', model_name)
-        return raw[0]['id']
-
-
-    def create_asset(self, data, asset_no):
-        print '[!] Creating asset with asset number: "%s"' % asset_no
-        uploader.upload_data('Assets', json.dumps(data))
-
-
-
-
-
 def main():
     print '\n'
     sync_buildings()
@@ -391,16 +363,13 @@ def main():
     
 
 if __name__ == '__main__':
-    logger = Logger()
     utility  = Utility()
     reader = Reader()
     uploader = Uploader()
     
     D42_USER, D42_PWD, D42_URL,  \
-    SW_USER, SW_PWD, SW_KEY, SW_URL,\
+    SW_USER, SW_PWD, SW_URL,\
     DRY_RUN, DEBUG, LOGGING,  LOGFILE = utility.read_config()
-
-    #print D42_USER, D42_PWD, D42_URL,  SW_USER, SW_PWD, SW_URL, DRY_RUN, DEBUG, LOGGING,  LOGFILE
     
     main()
     
